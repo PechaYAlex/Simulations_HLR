@@ -1,0 +1,30 @@
+to buildLink
+   let node 0
+  clear-links
+  
+  let total-nodes nodes-number
+  
+  let anotherNode node + 1;
+
+  while[ node < total-nodes - 1]
+  [
+    set anotherNode node + 1
+    while[anotherNode < total-nodes]
+   [
+      ask turtle node
+      [
+        if([distance myself] of turtle anotherNode) <= communication-range ;; if the node in the range of one ap's serveice area, build links between this node and the ap
+        [
+          create-link-with turtle anotherNode
+          ask my-links
+          [
+            set color yellow   ;;set the parameters for the link between the ap and the node
+            set thickness 0.3
+          ]
+        ]
+      ]
+      set anotherNode anotherNode + 1
+   ]
+    set node node + 1
+  ]
+end

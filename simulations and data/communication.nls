@@ -1,0 +1,907 @@
+to communication
+  
+  let node 0 ;;loop variable
+  let i 0  ;;temp variable
+  let j 0  ;;loop variable
+  let k 0 ;;loop variable
+  let k1 0 ;;loop
+  let k2 0 ;loop
+  let desState -1
+  let desStep -1
+  let desTranMatrix []
+  let desVisPos []   ;;temporary variable to record the destination group
+  let posVector [] ;
+  let tempPosVector [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0] ;
+  
+  let state -1
+  let step -1
+  let visPos []   ;;temporary variable to record the destination group
+  let neiPosVector [] ;
+  let neiTempPosVector [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0] ;
+  
+  let des []    ;;destination
+  let sou []  ;; source of msg
+  let siz []  ;; size of ms
+  let hopCount[] ;;hop count
+  let recNode [] ;;node number of recent contact
+  let recTime [] ;;time of recent contact
+  let hubVis -1;  hub the node is visiting
+  let msgNo []  ;;msg seq no
+  let tempMsgRecByDes []  ;; list of msg reaching the destination
+  let tempPos -1  ;;temporary position variable
+  let sender -1
+  let receiver -1
+  let qualified? false  ;;true if the node is qualified to relaythe msg
+  
+  let msgExist? false
+  set node 0 ;; reset loop variable
+  let nodesTalking 0 ;;the node that the other one wants to talk to
+  let pTemp 0 ; temporary variable which stands for position in a list
+  let timePeriod 0 ;;every period has avg-sojurn-time minutes
+  let meetingPos 0 ;;the possibility of the node meeting with the des`
+  let meetingPos1 0 ;;meeting pos between sender and des
+  let meetingPosTemp 0;;  temporary variable
+  
+  let deadLine 0  ;;time when the transmitting of msg should be finished
+  let posTemp 1 ;;temporary variable
+  
+  let tempStateStep [] ;temporary variable for 
+  let tempState []   ;temporary variable for updating state
+  
+  let tempStep 0 
+  
+  
+  ifelse ticks >= 14400[
+    file-open "hub817.txt"
+    file-print word "nodes number:                            "nodes-number 
+    file-print word "range:                                   "communication-range 
+    file-print word "avg storage:                             "avg-storage-size
+    file-print word "avg message size:                        "avg-message-size 
+    file-print word "avg transmitting rate:                   "avg-trans-rate
+    file-print word "avg interaction rate:                    "avg-interaction-time
+    file-print word "generation rate of new delivery request: "avg-new-delivery-request-rate
+    file-print word "probability threshold:                   "posThreshold
+    file-print word "total message delivery request:          "msgGen 
+    file-print word "message duplicated:                      "msgDupTot
+     file-print word "minimum time differenct of two contact: "minTime 
+    file-print word "avg delay:                               "(precision ((sum msgRecTime - sum genTimeofRecMsg) / msgRecTot )2)
+    file-print word "delivery ratio:                          "(precision (msgRecTot / msgGen) 4)
+    file-print word "************************************************************************" "*"
+    file-close
+    
+    show "transmission of msg is finished after:"
+    show timer  ;;real time in ms
+    show "avg delay"
+    show (sum msgRecTime - sum genTimeofRecMsg) / msgRecTot
+    show "quantity of msg delivery request:"
+    show msgGen
+    show "quantity of duplicated msgs:"
+    show msgDupTot
+    show "Packet Delivery Ratio:"
+    show msgRecTot / msgGen
+    show "******************************************"
+    set transCom? true
+    stop
+  ][
+  
+  set i 0  ;;reset temp variable
+           ;;step one: update the tempmsgRecByDesList so that each node will know which msgs have been transmitted to the destination;
+           ;;according to the up-to-date tempmsgRecByDesList, the node delete those msgs which are already received by the destination from its msgs list
+           ;;so that unnecessary msg transmissions will be eliminated
+  ask turtles[
+    
+    set tempMsgRecByDes msgRecByDesList
+    
+    ask link-neighbors [
+      
+      foreach msgRecByDesList[
+        if not member? ? tempMsgRecByDes[
+          set tempMsgRecByDes lput ? tempMsgRecByDes
+          
+        ]
+      ]  
+    ]
+    set msgRecByDesList tempMsgRecByDes
+    foreach msgRecByDesList[
+      if member? ? msgSeqNoList[
+        set tempPos position ? msgSeqNoList
+        set msgDesList remove-item tempPos msgDesList
+        set msgSizeList remove-item tempPos msgSizeList
+        set msgSouList remove-item tempPos msgSouList
+        set msgSeqNoList remove-item tempPos msgSeqNoList       
+      ]
+    ]
+    
+    set tempStateStep allStateStep
+    set tempState allState
+    ask link-neighbors[
+      set i 0
+      while[i < nodes-number][
+        if (item i tempStateStep) < (item i allStateStep)[
+          set tempStateStep replace-item i tempStateStep (item i allStateStep)
+          set tempState replace-item i tempState (item i allState)
+        ]
+        set i i + 1
+      ] 
+    ]
+    set allStateStep tempStateStep
+    set allState tempState
+  ]
+  ]
+  
+  buildLink
+  ask turtles[
+    set processDone? false  ;; reset it
+  ]
+  
+  
+  if ticks <= 14400[
+    set node 0 ;; reset loop variable
+    while [node < nodes-number][
+      ;;if this node is not receiving a msg at this moment, it can send a msg to other node
+      ;;if one other node is talking to this node or this node is sending a msg to another node now, end the process
+      ask turtle node[
+        set des msgDesList
+        set sou msgSouList
+        set siz msgSizeList
+        set msgNo msgSeqNoList
+        set recNode recConNode
+        set recTime recConTime
+        
+        set hubVis nodeState
+        set tempMsgRecByDes msgRecByDesList  ;;temporary variable used in the context of other turtle
+        set sender who
+        
+        set visPos visPosTable
+        set state nodeState
+        set step nodeStateStep
+        
+        ;;reset vispostable according to tranmatrix and state now
+        set k step
+        ifelse k = -1[
+          ;;do not change vispos and end the loop
+          set k 240 / avg-sojurn-time
+        ][
+        ;;if the des node does not enter the last step yet
+        if k < (240 / avg-sojurn-time - 1)[
+          ;;first one after current state
+          set neiPosVector (item state tranMatrix)
+          set k k + 1
+          set visPosTable replace-item k visPosTable neiPosVector 
+          while[k < (240 / avg-sojurn-time) - 1][
+            ;;posvector * tranmatrix
+            set k1 0 ;;reset
+            set posTemp 0
+            set neiTempPosVector [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0]
+            ;;transfer to 10 states
+            while[k1 < 10][
+              ;;transfer from 10 states
+              set k2 0
+              while[k2 < 10][
+                set posTemp (precision ((item k2 neiPosVector) * (item k1 (item k2 tranMatrix)) + posTemp) 4)
+                set k2 k2 + 1
+              ]
+              ;;the probability to tranfer to state k1 
+              set neiTempPosVector replace-item k1 neiTempPosVector posTemp
+              set posTemp 0
+              set k1 k1 + 1
+            ]
+            set visPosTable replace-item (k  + 1) visPosTable neiTempPosVector
+            set k k + 1
+          ]
+        ]
+        ]
+        
+        ask link-neighbors[
+          set pTemp -1
+          if member? who recNode[
+            set pTemp position who recNode
+            ]
+          if (not (member? who recNode)) or (pTemp > -1 and (ticks - (item pTemp recTime) > minTime))[
+         
+            set qualified? false
+          set j 0   ;; loop variable
+                    ;;check if one request of transfering data is being processed, if so, keep transfering the data
+                    ;;till the transfering is finished
+          
+          while[j < length des][
+            
+            ;;upon encountering with each other, nodes need to set up for transfering data
+            ;;I call the time of interaction and setting up for communication interaction time
+            set receiver who
+            
+            if not member? sender intNodesBuf [
+              set intNodesBuf lput sender intNodesBuf
+              set intTimeBuf lput avg-interaction-time intTimeBuf
+            ]
+            
+            ask turtle sender[ 
+              if not member? receiver intNodesBuf [
+                set intNodesBuf lput receiver intNodesBuf
+                set intTimeBuf lput avg-interaction-time intTimeBuf
+              ] 
+            ]
+            
+            ;;fetch the vispostable of the destination
+            
+            set deadLine 240 / avg-sojurn-time ;;4 hs in total, 30 mins per state, deadline is the last time division
+                                               ;;assume the simulation contains 10 periods
+            
+            ask turtle(item j des)[
+              set desState nodeState
+              set desStep nodeStateStep
+              set desTranMatrix tranMatrix
+              
+              ;;reset vispostable according to tranmatrix and state now
+              set k desStep
+              ifelse k = -1[
+                ;;do not change vispos and end the loop
+                set k 240 / avg-sojurn-time
+              ][
+              ;;if the des node does not enter the last step yet
+              if k < (240 / avg-sojurn-time - 1)[
+                ;;first one after current state
+                set posVector (item desState desTranMatrix)
+                set k k + 1
+                set visPosTable replace-item k visPosTable posVector 
+                while[k < (240 / avg-sojurn-time) - 1][
+                  ;;posvector * tranmatrix
+                  set k1 0 ;;reset
+                  set posTemp 0
+                  set tempPosVector [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0]
+                  ;;transfer to 10 states
+                  while[k1 < 10][
+                    ;;transfer from 10 states
+                    set k2 0
+                    while[k2 < 10][
+                      set posTemp (precision ((item k2 posVector) * (item k1 (item k2 tranMatrix)) + posTemp) 4)
+                      set k2 k2 + 1
+                    ]
+                    ;;the probability to tranfer to state k1 
+                    set tempPosVector replace-item k1 tempPosVector posTemp
+                    set posTemp 0
+                    set k1 k1 + 1
+                  ]
+                  set visPosTable replace-item (k  + 1) visPosTable tempPosVector
+                  set k k + 1
+                ]
+              ]
+              ]
+              set desVisPos visPosTable 
+            ]
+            
+            
+            ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            ;;update the vistable of neighbor node
+            set visPos visPosTable
+            set state nodeState
+            set step nodeStateStep
+            
+            ;;reset vispostable according to tranmatrix and state now
+            set k step
+            ifelse k = -1[
+              ;;do not change vispos and end the loop
+              set k 240 / avg-sojurn-time
+            ][
+            ;;if the des node does not enter the last step yet
+            if k < (240 / avg-sojurn-time - 1)[
+              ;;first one after current state
+              set neiPosVector (item state tranMatrix)
+              set k k + 1
+              set visPosTable replace-item k visPosTable neiPosVector 
+              while[k < (240 / avg-sojurn-time) - 1][
+                ;;posvector * tranmatrix
+                set k1 0 ;;reset
+                set posTemp 0
+                set neiTempPosVector [0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0]
+                ;;transfer to 10 states
+                while[k1 < 10][
+                  ;;transfer from 10 states
+                  set k2 0
+                  while[k2 < 10][
+                    set posTemp (precision ((item k2 neiPosVector) * (item k1 (item k2 tranMatrix)) + posTemp) 4)
+                    set k2 k2 + 1
+                  ]
+                  ;;the probability to tranfer to state k1 
+                  set neiTempPosVector replace-item k1 neiTempPosVector posTemp
+                  set posTemp 0
+                  set k1 k1 + 1
+                ]
+                set visPosTable replace-item (k  + 1) visPosTable neiTempPosVector
+                set k k + 1
+              ]
+            ]
+            ]
+            
+            
+            ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            ;;judge if the neighbor node is a qualified one to relay the message
+            ;;if the neighbor node is the destination node
+            if ticks mod 5 = 0[
+              ifelse(who = item j des)[
+                set qualified? true  
+              ]
+              [
+                ;;if the neighbor node is not the destination 
+                set meetingPos 0
+                set posTemp 1
+                
+                ;;if the possiblility that the des stay in the same hub now is bigger than threshold, transmit the msg to the node
+                ifelse nodeStateStep = desStep and desStep = 9[
+                  if nodeState = desState[
+                    set qualified? true
+                  ]
+                ][
+                ifelse nodeStateStep = 9[
+                  ;; if item nodeState (item 9 desVisPos) * 1 > posThreshold[
+                  ;   set qualified? true
+                  ;  ]
+                  set meetingPos item nodeState (item 9 desVisPos)
+                ][ 
+                
+                ;;if the desstep < nodestep
+                set meetingPos 0
+                set posTemp 1
+                set timePeriod floor (ticks / ((avg-sojurn-time) * 60)) + 1
+                while[timePeriod < deadLine][
+                  set k 0
+                  set meetingPosTemp 0
+                  ;;meeting posibility for two nodes at one time period
+                  while[k < 7][
+                    set meetingPosTemp ((item k(item (timePeriod - 1) visPosTable)) * (item k (item(timePeriod - 1) desVisPos))) + meetingPosTemp
+                    set k k + 1
+                  ]
+                  set meetingPosTemp 1 - meetingPosTemp
+                  set posTemp posTemp * meetingPosTemp
+                  set timePeriod timePeriod + 1
+                  
+                ]
+                ]
+                
+                set meetingPos 1 - posTemp
+                ]
+              ]
+            ]
+            
+            if (meetingPos > posThreshold and ticks mod 5 = 0)[
+              ask turtle node[  
+                ;;if the neighbor node is not the destination 
+                
+                set meetingPos1 1
+                ;;if the possiblility that the des stay in the same hub now is bigger than threshold, transmit the msg to the node
+                if nodeStateStep = 9[
+                  ;; if item nodeState (item 9 desVisPos) * 1 > posThreshold[
+                  ;   set qualified? true
+                  ;  ]
+                  set meetingPos item nodeState (item 9 desVisPos)
+                ]
+                if nodeStateStep < 9[
+                  set meetingPos1 0
+                  set posTemp 1 
+                  ;;if the desstep < nodestep
+                  set meetingPos1 0
+                  set posTemp 1
+                  set timePeriod floor (ticks / ((avg-sojurn-time) * 60)) + 1
+                  while[timePeriod < deadLine][
+                    set k 0
+                    set meetingPosTemp 0
+                    ;;meeting posibility for two nodes at one time period
+                    while[k < 7][
+                      set meetingPosTemp ((item k(item (timePeriod - 1) visPosTable)) * (item k (item(timePeriod - 1) desVisPos))) + meetingPosTemp
+                      set k k + 1
+                    ]
+                    set meetingPosTemp 1 - meetingPosTemp
+                    set posTemp posTemp * meetingPosTemp
+                    set timePeriod timePeriod + 1
+                    
+                  ]
+                  
+                  
+                  set meetingPos1 1 - posTemp
+                ]           
+              ]
+            ]
+            
+            if(meetingPos > posThreshold) and meetingPos > meetingPos1[
+              set qualified? true
+            ]
+            set k 0
+            
+            if(qualified?)[
+              ;; put the msg into buffer and prepare for the tranfer of msgs
+              if not (member? item j msgNo msgSeqNoBuf)[
+                set msgSouBuf lput item j sou msgSouBuf  ;; the buffer of the message sequence no of the msgs received by each node 
+                set msgDesBuf lput item j des msgDesBuf   ;; the buffer of destinations of the msgs received by each node
+                set msgSizeBuf lput item j siz msgSizeBuf    ;; the buffer of msg size of the msgs received by each node
+                set msgRelayBuf lput who msgRelayBuf
+                set msgFromBuf lput sender msgFromBuf
+                set progressBuf lput item j siz progressBuf
+                set msgSeqNoBuf lput item j msgNo msgSeqNoBuf
+              ]
+              
+              ;;save the msg in the sender's msg buffer after checking if it is already in the buffer or not
+              ask turtle sender [
+                set msgExist? false
+                if(not member? item j msgNo msgSeqNoBuf)[
+                  (foreach msgSeqNoBuf msgRelayBuf[
+                    if ( ?1 = item j msgNo and ?2 = receiver )[
+                      set msgExist? true
+                      
+                    ]
+                  ]
+                  )
+                  
+                  if not msgExist? [
+                    set msgSouBuf lput item j sou msgSouBuf  ;; the buffer of the message sequence no of the msgs received by each node 
+                    set msgDesBuf lput item j des msgDesBuf   ;; the buffer of destinations of the msgs received by each node
+                    set msgSizeBuf lput item j siz msgSizeBuf    ;; the buffer of msg size of the msgs received by each node
+                    set msgFromBuf lput sender msgFromBuf
+                    set msgRelayBuf lput receiver msgRelayBuf
+                    set progressBuf lput item j siz progressBuf
+                    set msgSeqNoBuf lput item j msgNo msgSeqNoBuf
+                    
+                  ]
+                ]
+              ] 
+            ]
+            set j j + 1
+          ]
+            
+        ] 
+        ]
+        
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+        ;;interaction process starts
+        set i 0
+        if length intNodesBuf > 0[
+          while [not processDone? and (i < length msgSeqNoBuf or i < length intNodesBuf)][
+            
+            ;; interaction process
+            
+            if i < length intTimeBuf and item i intTimeBuf > 0[
+              ifelse [processDone?] of turtle (item i intNodesBuf) [
+                ;;if the target node is talking with another node at this second, this node is going to find another node which it can talk with
+                ;;if all the nodes are not available, set progressDone? true and wait till there is a node it can talk to
+                if (i = length intNodesBuf - 1)[
+                  set processDone? true
+                ]
+              ][
+              
+              ;set nodeInContact item i intNodesBuf
+              set intTimeBuf replace-item i intTimeBuf (item i intTimeBuf - 1)
+              set processDone? true
+              ask turtle (item i intNodesBuf)[
+                ;;position node iniNodesBuf
+                
+                set intTimeBuf replace-item (position node intNodesBuf) intTimeBuf (item (position node intNodesBuf) intTimeBuf - 1)
+                set processDone? true
+              ]
+              
+              ]
+            ]
+            
+            
+            ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            ;;interaction process is done,
+            ;;start the process to transfer data
+            if not processDone? and i < length msgSeqNoBuf and item i progressBuf > 0[
+              
+              ;; first, check if it is sending msg or receiving msg now
+              ;; if sending
+              ifelse item i msgFromBuf = who[
+                ;;check if the node receiving the msg is available or not
+                ifelse [processDone?] of turtle (item i msgRelayBuf)[
+                  if i = (length intNodesBuf - 1)[
+                    set processDone? true
+                  ]
+                ]
+                [
+                  
+                  ;set nodeInContact item i msgRelayBuf  ;;set the node which is contact with this node
+                  set sender who
+                  set progressBuf replace-item i progressBuf (item i progressBuf - avg-trans-rate)
+                  
+                  ask turtle (item i msgRelayBuf)[
+                    
+                    set pTemp position (item i [msgSeqNoBuf] of turtle sender) msgSeqNoBuf
+                    
+                    if (item pTemp progressBuf > 0)[
+                    set progressBuf replace-item pTemp progressBuf (item pTemp progressBuf - avg-trans-rate)
+                    set processDone? true
+                    ]
+                  ]
+                  
+                  ;;progress done
+                  if item i progressBuf = 0[
+                    
+                    ;set nodeInContact -2
+                    set msgDupTot msgDupTot + 1   ;; increase duplicated msgs by 1
+                    
+                    ;; update recent contact table
+                    ;;ifelse the first contact
+                    ifelse not (member? (item i msgRelayBuf) recConNode)[
+                      set recConNode lput (item i msgRelayBuf) recConNode
+                      set recConTime lput ticks recConTime
+                    ][
+                    set pTemp position (item i msgRelayBuf) recConNode
+                    set recConTime replace-item pTemp recConTime ticks
+                    ]
+                    
+                    ask turtle item i msgRelayBuf[
+                      
+                      ;;clear the storage for new msg
+                      while[ usedStorage >= avg-storage-size and (length msgDesList > 0)][
+                        set usedStorage usedStorage - avg-message-size
+                        set msgDesList remove-item 0 msgDesList
+                        set msgSizeList remove-item 0 msgSizeList
+                        set msgSouList remove-item 0 msgSouList
+                        set msgSeqNoList remove-item 0 msgSeqNoList
+                      ]
+                      
+                      set msgDesList lput item i [msgDesBuf] of turtle sender msgDesList
+                      set msgSizeList lput item i [msgSizeBuf] of turtle sender msgSizeList
+                      set msgSouList lput item i [msgSouBuf] of turtle sender msgSouList
+                      set msgSeqNoList lput item i [msgSeqNoBuf] of turtle sender msgSeqNoList
+                      set usedStorage usedStorage + avg-message-size
+                      
+                      ;; update recent contact table
+                      ;;ifelse the first contact
+                      ifelse not (member? sender recConNode)[
+                        set recConNode lput sender recConNode
+                        set recConTime lput ticks recConTime
+                      ][
+                      set pTemp position sender recConNode
+                      set recConTime replace-item pTemp recConTime ticks
+                      ]
+                      
+                    ]
+                    
+                    
+                    ;;if this node is the destination of the msg being transfered
+                    if item i msgDesBuf = item i msgRelayBuf[ 
+                      set mr mr + 1
+                      set msgRecTot msgRecTot + 1 ;; increase msg received by 1
+                      set msgRecByDesList lput item i msgSeqNoBuf msgRecByDesList
+                      set msgRecTime lput ticks msgRecTime
+                      set genTimeofRecMsg lput item (last msgSeqNoList) msgGenTime genTimeofRecMsg
+                      
+                      ask turtle item i msgRelayBuf[
+                        
+                        set msgRecByDesList lput item i [msgSeqNoBuf] of turtle sender msgRecByDesList
+                        
+                      ]
+                    ]
+                    
+                  ]
+                  set processDone? true
+                  ask turtle item i msgRelayBuf[
+                    set processDone? true 
+                  ]
+                  
+                ]  
+              ]
+              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+              ;;if this node is receiving a msg
+              [ 
+                ifelse [processDone?] of turtle (item i msgFromBuf) [
+                  ;; if all the nodes are busy, this node will wait till it has one available node to transfer data to
+                  if i = (length intNodesBuf - 1)[
+                    set processDone? true
+                  ]
+                ]
+                [ 
+                  ;; if the other node is available, start the process of data transfering
+                  set receiver who
+                  set progressBuf replace-item i progressBuf (item i progressBuf - avg-trans-rate)
+                  set processDone? true
+                  
+                  ask turtle item i msgFromBuf[
+                    ;; the sender may be sending one msg to different nodes at the same time
+                    ;; so we can use msg sequence number and msg relay number together to find the msg which is transfered in sender's buffer
+                    set k 0
+                    set pTemp k
+                    while [ k < length msgFromBuf][
+                      if item k msgSeqNoBuf = item i ([msgSeqNoBuf] of turtle receiver ) and item k msgRelayBuf = receiver [
+                        set pTemp k
+                      ]
+                      set k k + 1
+                    ]
+                    set progressBuf replace-item pTemp progressBuf (item pTemp progressBuf - avg-trans-rate)
+                    set processDone? true
+                    
+                  ]
+                  
+                  ;;if the transferring of this msg is done, put the new msg into the msg list and update related info
+                  if item i progressBuf = 0[
+                    
+                    while[ usedStorage >= avg-storage-size and (length msgDesList > 0)][
+                      set usedStorage usedStorage - avg-message-size
+                      set msgDesList remove-item 0 msgDesList
+                      set msgSizeList remove-item 0 msgSizeList
+                      set msgSouList remove-item 0 msgSouList
+                      set msgSeqNoList remove-item 0 msgSeqNoList
+                    ]
+                    
+                    ;set nodeInContact -2
+                    
+                    set msgDupTot msgDupTot + 1   ;; increase duplicated msgs by 1
+                    
+                    set msgDesList lput item i msgDesBuf msgDesList
+                    set msgSizeList lput item i msgSizeBuf msgSizeList
+                    set msgSouList lput item i msgSouBuf msgSouList
+                    set msgSeqNoList lput item i msgSeqNoBuf msgSeqNoList
+                    set usedStorage usedStorage + avg-message-size
+                    
+                    ;; update recent contact table
+                    ;;ifelse the first contact
+                    ifelse not (member? (item i msgFromBuf) recConNode)[
+                      set recConNode lput (item i msgFromBuf) recConNode
+                      set recConTime lput ticks recConTime
+                    ][
+                    set pTemp position (item i msgFromBuf) recConNode
+                    set recConTime replace-item pTemp recConTime ticks
+                    ]
+                    
+                    ;;if this node is the destination of the msg being transfered
+                    if item i msgDesBuf = item i msgRelayBuf[ 
+                      set mr mr + 1
+                      set msgRecTot msgRecTot + 1 ;; increase msg received by 1
+                      set msgRecByDesList lput item i msgSeqNoBuf msgRecByDesList
+                      set msgRecTime lput ticks msgRecTime
+                      set genTimeofRecMsg lput item (last msgSeqNoList) msgGenTIme genTimeofRecMsg
+                      
+                      ask turtle item i msgFromBuf[
+                        
+                        set msgRecByDesList lput item i [msgSeqNoBuf] of turtle receiver msgRecByDesList
+                        
+                        ;; update recent contact table
+                        ;;ifelse the first contact
+                        ifelse not (member? sender recConNode)[
+                          set recConNode lput sender recConNode
+                          set recConTime lput ticks recConTime
+                        ][
+                        set pTemp position sender recConNode
+                        set recConTime replace-item pTemp recConTime ticks
+                        ]
+                      ]    
+                    ]
+                  ]
+                  set processDone? true
+                  
+                ]
+              ]
+              
+            ]
+            
+            ;;update loop variable
+            set i i + 1
+            
+          ]
+        ] 
+        
+        if not processDone?[
+          move1
+        ]
+        
+        
+        ;;generate a new message delivery request 
+        if ticks mod (avg-new-delivery-request-rate * 60) = 1 and ticks != 1[
+          set msgGenTime lput ticks msgGenTime
+          ;;set the size of the msgs according to the poisson distribution
+          set msgSize avg-message-size
+          
+          ;;aps are created before nodes, we set the source sequence number of nodes accordingly
+          set sourceSeqNo who
+          ;;msg Gen is a global vari
+          set msgSeqNo msgGen
+          set msgGen msgGen + 1
+          set desSeqNo random (nodes-number - 1)
+          while[desSeqNo = sourceSeqNo][
+            set desSeqNo random (nodes-number - 1)
+          ]      
+          ;;save the msg this node wants to transfer to another one in the listss
+          set msgDesList lput desSeqNo msgDesList
+          set msgSizeList lput msgSize msgSizeList
+          set msgSouList lput sourceSeqNo msgSouList
+          set msgSeqNoList lput msgSeqNo msgSeqNoList
+          set usedStorage usedStorage + avg-message-size
+          
+        ]
+      ]
+      set node node + 1
+    ]
+    tick
+  ]
+  
+  ;;ask for more msg delivery
+end
+
+
+to test
+  let visPos []
+  let qualified? false
+  let meetingPosTemp 0
+  let meetingPos 0
+  let desVisPos []
+  let j 0
+  let timePeriod 0
+  let deadLine 0
+  let des []
+  let k 0
+  let posTemp 1
+  let i 2
+  ask turtle 1[
+    set visPos visPosTable
+    set des msgDesList
+    while[i < 40][
+      ask turtle i[
+        ;;fetch the vispostable of the destination
+        set timePeriod 1
+        set deadLine timePeriod + 5
+        if deadLine > 11[
+          set deadLine 11
+        ]
+        ;;assume the simulation contains 10 periods
+        
+        ask turtle(item j des)[
+          set desVisPos visPosTable
+        ]
+        
+        ifelse(who = item j des)[
+          set qualified? true  
+        ]
+        [
+          set meetingPos 0
+          set posTemp 1
+          while[timePeriod < deadLine][
+            set k 0
+            set meetingPosTemp 0
+            ;;meeting posibility for two nodes at one time period
+            while[k < 4][
+              set meetingPosTemp ((item k(item (timePeriod - 1) visPosTable)) * (item k (item(timePeriod - 1) desVisPos))) + meetingPosTemp
+              set k k + 1
+            ]
+            set meetingPosTemp 1 - meetingPosTemp
+            set posTemp posTemp * meetingPosTemp
+            set timePeriod timePeriod + 1
+            
+          ]
+          set meetingPos 1 - posTemp
+        ]
+        show meetingPos
+        set i i + 1
+      ]
+    ]
+    
+  ]
+end
+
+to test1
+  let node 0 ;;loop variable
+  let i 0  ;;temp variable
+  let j 0  ;;loop variable
+  let k 0 ;;loop variable
+  let k1 0 ;;loop
+  let k2 0 ;loop
+  let desState -1
+  let desStep -1
+  let desTranMatrix []
+  let desVisPos []   ;;temporary variable to record the destination group
+  let posVector [] ;
+  let tempPosVector [0 0 0 0 0 0 0 0 0 0] ;
+  
+  let state -1
+  let step -1
+  let visPos []   ;;temporary variable to record the destination group
+  let neiPosVector [] ;
+  let neiTempPosVector [0 0 0 0 0 0 0 0 0 0] ;
+  
+  let des []    ;;destination
+  let sou []  ;; source of msg
+  let siz []  ;; size of msg
+  let hopCount[] ;;hop count
+  let hubVis -1;  hub the node is visiting
+  let msgNo []  ;;msg seq no
+  let tempMsgRecByDes []  ;; list of msg reaching the destination
+  let tempPos -1  ;;temporary position variable
+  let sender -1
+  let receiver -1
+  let qualified? false  ;;true if the node is qualified to relaythe msg
+  
+  let msgExist? false
+  set node 0 ;; reset loop variable
+  let nodesTalking 0 ;;the node that the other one wants to talk to
+  let pTemp 0 ; temporary variable which stands for position in a list
+  let timePeriod 0 ;;every period has avg-sojurn-time minutes
+  let meetingPos 1 ;;the possibility of the node meeting with the des`
+  let meetingPosTemp 0;;  temporary variable
+  
+  let deadLine 0  ;;time when the transmitting of msg should be finished
+  let posTemp 1 ;;temporary variable
+  
+  let tempStateStep [] ;temporary variable for 
+  let tempState []   ;temporary variable for updating state
+  
+  let tempStep 0
+  ask nodes[
+    set visPos visPosTable
+    set state nodeState
+    set step nodeStateStep
+    
+    ;;reset vispostable according to tranmatrix and state now
+    set k step
+    ifelse k = -1[
+      ;;do not change vispos and end the loop
+      set k 240 / avg-sojurn-time
+    ][
+    ;;if the des node does not enter the last step yet
+    if k < ((240 / avg-sojurn-time) - 1)[
+      ;;first one after current state
+      set neiPosVector (item state tranMatrix)
+      
+      set visPosTable replace-item (k + 1) visPosTable neiPosVector
+      set k k + 1 
+      while[k < (240 / avg-sojurn-time) - 1][
+        ;;posvector * tranmatrix
+        set k1 0 ;;reset
+        set posTemp 0
+        set neiTempPosVector [0 0 0 0 0 0 0 0 0 0]
+        ;;transfer to 10 states
+        while[k1 < 10][
+          ;;transfer from 10 states
+          set k2 0
+          while[k2 < 10][
+            set posTemp (item k2 neiPosVector) * (item k1 (item k2 tranMatrix)) + posTemp
+            set k2 k2 + 1
+          ]
+          ;;the probability to tranfer to state k1 
+          set neiTempPosVector replace-item k1 neiTempPosVector posTemp
+          set posTemp 0
+          set k1 k1 + 1
+        ]
+        set visPosTable replace-item (k  + 1) visPosTable neiTempPosVector
+        set k k + 1
+      ]
+    ]
+    ]
+    move1
+  ]
+  tick
+  
+  let meetingPos1 0
+  
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;;vispos between sender and des
+  ask turtle node[  
+    ;;if the neighbor node is not the destination 
+    
+    set meetingPos1 1
+    ;;if the possiblility that the des stay in the same hub now is bigger than threshold, transmit the msg to the node
+    if nodeStateStep < 9[
+      set meetingPos1 0
+      set posTemp 1 
+      ;;if the desstep < nodestep
+      set meetingPos1 0
+      set posTemp 1
+      set timePeriod floor (ticks / ((avg-sojurn-time) * 60)) + 1
+      while[timePeriod < deadLine][
+        set k 0
+        set meetingPosTemp 0
+        ;;meeting posibility for two nodes at one time period
+        while[k < 7][
+          set meetingPosTemp ((item k(item (timePeriod - 1) visPosTable)) * (item k (item(timePeriod - 1) desVisPos))) + meetingPosTemp
+          set k k + 1
+        ]
+        set meetingPosTemp 1 - meetingPosTemp
+        set posTemp posTemp * meetingPosTemp
+        set timePeriod timePeriod + 1
+        
+      ]
+      
+      
+      set meetingPos1 1 - posTemp
+    ]           
+  ]
+end

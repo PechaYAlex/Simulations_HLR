@@ -1,0 +1,28 @@
+;; the process to require more msg delivery 
+to msgDelReq
+  if random (avg-new-delivery-request-rate * 60) < 1[
+  ask turtles[
+    
+      set msgGenTime lput ticks msgGenTime
+      ;;set the size of the msgs according to the poisson distribution
+      set msgSize random-poisson avg-message-size
+      
+      ;;aps are created before nodes, we set the source sequence number of nodes accordingly
+      set sourceSeqNo who
+      ;;msg Gen is a global vari
+      set msgSeqNo msgGen
+      set msgGen msgGen + 1
+      set desSeqNo random (nodes-number - 1)
+      while[desSeqNo = sourceSeqNo][
+        set desSeqNo random (nodes-number - 1)
+      ]      
+      ;;save the msg this node wants to transfer to another one in the listss
+      set msgDesList lput desSeqNo msgDesList
+      set msgSizeList lput msgSize msgSizeList
+      set msgHopCountList lput 0 msgHopCountList
+      set msgSouList lput sourceSeqNo msgSouList
+      set msgSeqNoList lput msgSeqNo msgSeqNoList
+    
+  ]
+  ]
+end

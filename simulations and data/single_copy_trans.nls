@@ -1,0 +1,393 @@
+to SingleCopyTrans
+  
+  let node 0 ;;loop variable
+  let i 0  ;;temp variable
+  let j 0  ;;loop variable
+  let k 0 ;;loop variable
+  let desVisPos []   ;;temporary variable to record the destination group
+  let des []    ;;destination
+  let sou []  ;; source of msg
+  let siz []  ;; size of msg
+  let hubVis -1;  hub the node is visiting
+  let msgNo []  ;;msg seq no
+  let tempMsgRecByDes []  ;; list of msg reaching the destination
+  let tempPos -1  ;;temporary position variable
+  let sender -1
+  let receiver -1
+  let qualified? false  ;;true if the node is qualified to relaythe msg
+  
+  let msgExist? false
+  set node 0 ;; reset loop variable
+  let nodesTalking 0 ;;the node that the other one wants to talk to
+  let pTemp 0 ; temporary variable which stands for position in a list
+  let timePeriod 0 ;;every period has avg-sojurn-time minutes
+  let meetingPos 1 ;;the possibility of the node meeting with the des`
+  let meetingPosTemp 0;;  temporary variable
+  
+  let deadLine 0  ;;time when the transmitting of msg should be finished
+  let posTemp 1 ;;temporary variable
+  
+  ifelse msgRecTot = msgGen or ticks >= 14400[
+    file-open "single816.txt"
+    file-print word "nodes number:                            "nodes-number 
+    file-print word "range:                                   "communication-range 
+    file-print word "avg storage:                             "avg-storage-size
+    file-print word "avg message size:                        "avg-message-size 
+    file-print word "avg transmitting rate:                   "avg-trans-rate
+    file-print word "avg interaction rate:                    "avg-interaction-time
+    file-print word "generation rate of new delivery request: "avg-new-delivery-request-rate
+    file-print word "total message delivery request:          "msgGen 
+    file-print word "message duplicated:                      "msgDupTot
+    file-print word "avg delay:                               "(precision ((sum msgRecTime - sum genTimeofRecMsg) / msgRecTot )2)
+    file-print word "delivery ratio:                          "(precision (msgRecTot / msgGen) 4)
+    file-print word "************************************************************************" "*"
+    file-close
+    
+    show "transmission of msg is finished after:"
+    show timer  ;;real time in ms
+    show "avg delay"
+    show (sum msgRecTime - sum genTimeofRecMsg) / msgRecTot
+    show "quantity of msg delivery request:"
+    show msgGen
+    show "quantity of duplicated msgs:"
+    show msgDupTot
+    show "Packet Delivery Ratio:"
+    show msgRecTot / msgGen
+    show "******************************************"
+    set transCom? true
+    stop
+  ][
+  
+  set i 0  ;;reset temp variable
+           ;;step one: update the tempmsgRecByDesList so that each node will know which msgs have been transmitted to the destination;
+           ;;according to the up-to-date tempmsgRecByDesList, the node delete those msgs which are already received by the destination from its msgs list
+           ;;so that unnecessary msg transmissions will be eliminated
+  ask turtles[
+    
+    set tempMsgRecByDes msgRecByDesList
+    
+    ask link-neighbors [
+      
+      foreach msgRecByDesList[
+        if not member? ? tempMsgRecByDes[
+          set tempMsgRecByDes lput ? tempMsgRecByDes
+          
+        ]
+      ]  
+    ]
+    set msgRecByDesList tempMsgRecByDes
+    foreach msgRecByDesList[
+      if member? ? msgSeqNoList[
+        set tempPos position ? msgSeqNoList
+        set msgDesList remove-item tempPos msgDesList
+        set msgSizeList remove-item tempPos msgSizeList
+        set msgSouList remove-item tempPos msgSouList
+        set msgSeqNoList remove-item tempPos msgSeqNoList        
+      ]
+    ]
+  ]
+  ]
+  
+  buildLink
+  ask turtles[
+    set processDone? false  ;; reset it
+  ]
+  
+  
+  if ticks <= 14400[
+    set node 0 ;; reset loop variable
+    while [node < nodes-number][
+      ;;if this node is not receiving a msg at this moment, it can send a msg to other node
+      ;;if one other node is talking to this node or this node is sending a msg to another node now, end the process
+      ask turtle node[
+        set des msgDesList
+        set sou msgSouList
+        set siz msgSizeList
+        set msgNo msgSeqNoList
+        
+        set hubVis hubVisiting 
+        set tempMsgRecByDes msgRecByDesList  ;;temporary variable used in the context of other turtle
+        set sender who
+        ask link-neighbors[
+          set qualified? false
+          set j 0   ;; loop variable
+                    ;;check if one request of transfering data is being processed, if so, keep transfering the data
+                    ;;till the transfering is finished
+          
+          while[j < length des][
+            
+            ;;upon encountering with each other, nodes need to set up for transfering data
+            ;;I call the time of interaction and setting up for communication interaction time
+            set receiver who
+            
+            if not member? sender intNodesBuf [
+              set intNodesBuf lput sender intNodesBuf
+              set intTimeBuf lput avg-interaction-time intTimeBuf
+            ]
+            
+            ask turtle sender[ 
+              if not member? receiver intNodesBuf [
+                set intNodesBuf lput receiver intNodesBuf
+                set intTimeBuf lput avg-interaction-time intTimeBuf
+              ] 
+            ]
+            
+            if(item j des = who)[
+              ;; put the msg into buffer and prepare for the tranfer of msgs
+              if not (member? item j msgNo msgSeqNoBuf)[
+                set msgSouBuf lput item j sou msgSouBuf  ;; the buffer of the message sequence no of the msgs received by each node 
+                set msgDesBuf lput item j des msgDesBuf   ;; the buffer of destinations of the msgs received by each node
+                set msgSizeBuf lput item j siz msgSizeBuf    ;; the buffer of msg size of the msgs received by each node
+                set msgRelayBuf lput who msgRelayBuf
+                set msgFromBuf lput sender msgFromBuf
+                set progressBuf lput item j siz progressBuf
+                set msgSeqNoBuf lput item j msgNo msgSeqNoBuf
+              ]
+              
+              ;;save the msg in the sender's msg buffer after checking if it is already in the buffer or not
+              ask turtle sender [
+                set msgExist? false
+                if(not member? item j msgNo msgSeqNoBuf)[
+                  (foreach msgSeqNoBuf msgRelayBuf[
+                    if ( ?1 = item j msgNo and ?2 = receiver )[
+                      set msgExist? true
+                      
+                    ]
+                  ]
+                  )
+                
+                if not msgExist? [
+                  set msgSouBuf lput item j sou msgSouBuf  ;; the buffer of the message sequence no of the msgs received by each node 
+                  set msgDesBuf lput item j des msgDesBuf   ;; the buffer of destinations of the msgs received by each node
+                  set msgSizeBuf lput item j siz msgSizeBuf    ;; the buffer of msg size of the msgs received by each node
+                  set msgFromBuf lput sender msgFromBuf
+                  set msgRelayBuf lput receiver msgRelayBuf
+                  set progressBuf lput item j siz progressBuf
+                  set msgSeqNoBuf lput item j msgNo msgSeqNoBuf
+                  
+                ]
+                ]
+              ] 
+            ]
+            set j j + 1
+          ]
+        ]
+        
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+        ;;interaction process starts
+        set i 0
+        if length intNodesBuf > 0[
+          while [not processDone? and (i < length msgSeqNoBuf or i < length intNodesBuf)][
+            
+            ;; interaction process
+            
+            if i < length intTimeBuf and item i intTimeBuf > 0[
+              ifelse [processDone?] of turtle (item i intNodesBuf) [
+                ;;if the target node is talking with another node at this second, this node is going to find another node which it can talk with
+                ;;if all the nodes are not available, set progressDone? true and wait till there is a node it can talk to
+                if (i = length intNodesBuf - 1)[
+                  set processDone? true
+                ]
+              ][
+              
+              ;set nodeInContact item i intNodesBuf
+              set intTimeBuf replace-item i intTimeBuf (item i intTimeBuf - 1)
+              set processDone? true
+              ask turtle (item i intNodesBuf)[
+                ;;position node iniNodesBuf
+                
+                set intTimeBuf replace-item (position node intNodesBuf) intTimeBuf (item (position node intNodesBuf) intTimeBuf - 1)
+                set processDone? true
+              ]
+              
+              ]
+            ]
+            
+            
+            ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            ;;interaction process is done,
+            ;;start the process to transfer data
+            if not processDone? and i < length msgSeqNoBuf and item i progressBuf > 0[
+              
+              ;; first, check if it is sending msg or receiving msg now
+              ifelse item i msgFromBuf = who[
+                ;;check if the node receiving the msg is available or not
+                ifelse [processDone?] of turtle (item i msgRelayBuf)[
+                  if i = (length intNodesBuf - 1)[
+                    set processDone? true
+                  ]
+                ]
+                [
+                  
+                  ;set nodeInContact item i msgRelayBuf  ;;set the node which is contact with this node
+                  set sender who
+                  set progressBuf replace-item i progressBuf (item i progressBuf - avg-trans-rate)
+                  set usedStorage usedStorage + avg-trans-rate
+                  
+                  ask turtle item i msgRelayBuf[
+                    
+                    set pTemp position (item i [msgSeqNoBuf] of turtle sender) msgSeqNoBuf
+                    
+                    set progressBuf replace-item pTemp progressBuf (item pTemp progressBuf - avg-trans-rate)
+                    set usedStorage usedStorage + avg-trans-rate
+                    
+                    if item pTemp progressBuf <= 0[
+                      ;set nodeInContact -2
+                    ]
+                  ]
+                  
+                  if item i progressBuf <= 0[
+                    
+                    ;set nodeInContact -2
+                    
+                    set msgDupTot msgDupTot + 1   ;; increase duplicated msgs by 1
+                    
+                    set usedStorage usedStorage + item i progressBuf
+                    
+                    ask turtle item i msgRelayBuf[
+                      
+                      set msgDesList lput item i [msgDesBuf] of turtle sender msgDesList
+                      set msgSizeList lput item i [msgSizeBuf] of turtle sender msgSizeList
+                      set msgSouList lput item i [msgSouBuf] of turtle sender msgSouList
+                      set msgSeqNoList lput item i [msgSeqNoBuf] of turtle sender msgSeqNoList
+                      set usedStorage usedStorage + item i [progressBuf] of turtle sender
+                      
+                    ]
+                    
+                    
+                    ;;if this node is the destination of the msg being transfered
+                    if item i msgDesBuf = item i msgRelayBuf[ 
+                      set mr mr + 1
+                      set msgRecTot msgRecTot + 1 ;; increase msg received by 1
+                      set msgRecByDesList lput item i msgSeqNoBuf msgRecByDesList
+                      set msgRecTime lput ticks msgRecTime
+                      set genTimeofRecMsg lput item (last msgSeqNoList) msgGenTime genTimeofRecMsg
+                      
+                      ask turtle item i msgRelayBuf[
+                        
+                        set msgRecByDesList lput item i [msgSeqNoBuf] of turtle sender msgRecByDesList
+                        
+                      ]
+                    ]
+                    
+                  ]
+                  set processDone? true
+                  ask turtle item i msgRelayBuf[
+                    set processDone? true 
+                  ]
+                  
+                ]  
+              ]
+              ;;if this node is receiving a msg
+              [ 
+                ifelse [processDone?] of turtle (item i msgFromBuf) [
+                  ;; if all the nodes are busy, this node will wait till it has one available node to transfer data to
+                  if i = (length intNodesBuf - 1)[
+                    set processDone? true
+                  ]
+                ]
+                [ 
+                  ;; if the other node is available, start the process of data transfering
+                  set receiver who
+                  set progressBuf replace-item i progressBuf (item i progressBuf - avg-trans-rate)
+                  set usedStorage usedStorage + avg-trans-rate
+                  
+                  ask turtle item i msgFromBuf[
+                    ;; the sender may be sending one msg to different nodes at the same time
+                    ;; so we can use msg sequence number and msg relay number together to find the msg which is transfered in sender's buffer
+                    set k 0
+                    set pTemp k
+                    while [ k < length msgFromBuf][
+                      if item k msgSeqNoBuf = item i ([msgSeqNoBuf] of turtle receiver ) and item k msgRelayBuf = receiver [
+                        set pTemp k
+                      ]
+                      set k k + 1
+                    ]
+                    set progressBuf replace-item pTemp progressBuf (item pTemp progressBuf - avg-trans-rate)
+                    set usedStorage usedStorage + avg-trans-rate
+                    set processDone? true
+                    
+                    if item pTemp progressBuf <= 0[
+                      ;set nodeInContact -2
+                    ]
+                  ]
+                  
+                  ;;if the transferring of this msg is done, put the new msg into the msg list and update related info
+                  if item i progressBuf <= 0[
+                    
+                    ;set nodeInContact -2
+                    
+                    set msgDupTot msgDupTot + 1   ;; increase duplicated msgs by 1
+                    
+                    set usedStorage usedStorage + item i progressBuf
+                    
+                    set msgDesList lput item i msgDesBuf msgDesList
+                    set msgSizeList lput item i msgSizeBuf msgSizeList
+                    set msgSouList lput item i msgSouBuf msgSouList
+                    set msgSeqNoList lput item i msgSeqNoBuf msgSeqNoList
+                    set usedStorage usedStorage + item i progressBuf
+                    
+                    ;;if this node is the destination of the msg being transfered
+                    if item i msgDesBuf = item i msgRelayBuf[ 
+                      set mr mr + 1
+                      set msgRecTot msgRecTot + 1 ;; increase msg received by 1
+                      set msgRecByDesList lput item i msgSeqNoBuf msgRecByDesList
+                      set msgRecTime lput ticks msgRecTime
+                      set genTimeofRecMsg lput item (last msgSeqNoList) msgGenTIme genTimeofRecMsg
+                      
+                      ask turtle item i msgFromBuf[
+                        
+                        set msgRecByDesList lput item i [msgSeqNoBuf] of turtle receiver msgRecByDesList
+                        
+                      ]
+                      
+                      
+                    ]
+                  ]
+                  set processDone? true
+                  
+                ]
+              ]
+              
+            ]
+            
+            ;;update loop variable
+            set i i + 1
+            
+          ]
+        ] 
+        
+        if not processDone?[
+          move1
+        ]
+        
+        if ticks mod (avg-new-delivery-request-rate * 60) = 1 and ticks != 1[
+          set msgGenTime lput ticks msgGenTime
+          ;;set the size of the msgs according to the poisson distribution
+          set msgSize random-poisson avg-message-size
+          
+          ;;aps are created before nodes, we set the source sequence number of nodes accordingly
+          set sourceSeqNo who
+          ;;msg Gen is a global vari
+          set msgSeqNo msgGen
+          set msgGen msgGen + 1
+          set desSeqNo random (nodes-number - 1)
+          while[desSeqNo = sourceSeqNo][
+            set desSeqNo random (nodes-number - 1)
+          ]      
+          ;;save the msg this node wants to transfer to another one in the listss
+          set msgDesList lput desSeqNo msgDesList
+          set msgSizeList lput msgSize msgSizeList
+          set msgSouList lput sourceSeqNo msgSouList
+          set msgSeqNoList lput msgSeqNo msgSeqNoList
+          
+        ]
+      ]
+      set node node + 1
+    ]
+    tick
+  ]
+  
+  ;;ask for more msg delivery
+end

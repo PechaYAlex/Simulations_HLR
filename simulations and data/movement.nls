@@ -1,0 +1,482 @@
+
+to move  
+  
+  ;;determine the first hub to go
+  let roll random-float 1
+  let hub 0   ;;tempHub is the hub the node is going to vist
+  let tempSum 0
+  let visNewHub? false
+  let radius 0
+  
+  
+  if sojTimeLeft <= 0[
+    set visNewHub? true
+    set sojTimeLeft (random-poisson (avg-sojurn-time * 60))   ;;set the sojurn time the node is going to stay in the hub
+    set sojTimeTable lput sojTimeLeft sojTimeTable
+    
+    set tempSum item 0 (item hubVisited visPosTable)
+    while [roll > tempSum][
+      set hub hub + 1
+      set tempSum tempSum + item hub( item hubVisited visPosTable)
+    ]
+    
+    set hubVisiting hub     ;;set the new hub the node is going to visit
+    set hubVisited hubVisited + 1  ;;record the number of hubs which the node has visited
+    set hubVisitedTable lput hub hubVisitedTable  ;; up date the table
+    
+  ]
+  
+  set desXcor item hubVisiting hubXcorList
+  set desYcor item hubVisiting hubYcorList
+  set radius item hubVisiting hubRadiusList
+  ;;if the node is in the destination hub, it moves according to waypoint random mobility within the destination hub
+  ifelse ((xcor + speed * dx - desXcor)^ 2 + (ycor + speed * dy - desYcor)^ 2)^ 0.5 <= radius
+    [
+      moveInhub
+      set sojTimeLeft sojTimeLeft - 1
+    ]
+    [
+      moveBtnHubs
+    ]
+  
+end
+
+to move1
+  let hub 0   ;;tempHub is the hub the node is going to vist
+  let tempSum 0
+  let visNewHub? false
+  let radius 0
+  let time_division 0
+  let i 0
+  let j 0
+  let maxSpeed 2
+  let time_div 240 / avg-sojurn-time
+  
+  ;;determine which mobility pattern to perform
+  if floor (ticks / (avg-sojurn-time * 60)) > nodeStateStep[
+    set neHub -1 ;;reset next hub
+    set preHub -1
+    
+    set i floor (ticks / (avg-sojurn-time * 60))
+    ifelse i < time_div - 1[
+      set curState item i visTable
+      ;;update node State
+      set nodeState curState
+      set nodeStateStep i      ;no. of first step is 0
+      set allState replace-item who allState curState
+      set allStateStep replace-item who allStateStep i
+      
+      set neState item (i + 1) visTable
+    ][
+    set curState item i visTable
+    set neState -1
+    ]
+    
+    set j i + 1
+    while[j < time_div][
+      if item j visTable < 7[
+        set neHub (item j visTable) 
+        set j 25
+      ]
+      set j j + 1
+    ]
+    
+    ;;find the previous hub it went to
+    set j i - 1
+    while[j > -1][
+      if item j visTable < 7[
+        set preHub (item j visTable)
+        set j -2
+      ]
+      set j j - 1
+    ]
+    
+    if curState >= 7[
+    ;;set the desxcor desycor
+    ifelse preHub != -1[
+      set desXcor item preHub hubXcorList
+      set desYcor item preHub hubYcorList 
+      set desRadius item preHub hubRadiusList      
+    ][
+      set preHub random 7
+      set desXcor item preHub hubXcorList
+      set desYcor item preHub hubYcorList
+      set desRadius item preHub hubRadiusList
+      
+    ]
+    ]
+    
+    if curState < 7[
+      set desXcor item curState hubXcorList
+      set desYcor item curState hubYcorList
+      set desRadius item curState hubRadiusList
+    ]
+  ]  
+  
+  ;;;;;;;;;;;;;;;;;
+  ;;;;;;;;;move;;;;;;;;;
+  
+  ;;if it is going to a hub
+  if curState < 7[
+    ;;if it is out of that hub
+    ifelse ((xcor - desXcor)^ 2 + (ycor - desYcor)^ 2)^ 0.5 > desRadius[
+      moveToHub
+    ][
+    moveInHub
+    ]
+  ]
+  
+  ;;it it is going to outlying areas 
+  if curState = 7[
+    moveOutlying
+  ]
+  
+  ;;if it is going to areas around hubs
+  if curState > 7[
+    moveAroundHub
+  ]     
+end
+
+to moveInHub  
+  ;;move according to  random waypoint mobility model
+  if(ticks mod 10 = 0)[
+    set speed random-normal avg-speed-nodes 0.3
+    set speed speed / 2
+    set heading random 360
+  ]
+  while [((xcor + speed * dx - desXcor)^ 2 + (ycor + speed * dy - desYcor)^ 2)^ 0.5 > desRadius][
+    set heading random 360
+    set speed random-normal avg-speed-nodes 0.3
+    set speed speed / 2
+  ]  
+  set xcor xcor + speed * dx
+  set ycor ycor + speed * dy
+end
+
+to moveToHub
+  if ticks mod 600 = 1[
+    set heading atan  (desXcor - xcor)(desYcor - ycor)
+  ]
+  ;;adjust direct every 10 secs
+  if ticks mod 10 = 0[
+    set heading atan  (desXcor - xcor)(desYcor - ycor)
+  ]
+  set speed (2 / 2);; maximum speed
+  
+  set xcor xcor + dx * speed
+  set ycor ycor + dy * speed
+end
+
+to moveAroundHub
+  ;;if out of 1.5 r, move back
+  ifelse ((xcor - desXcor)^ 2 + (ycor - desYcor)^ 2)^ 0.5 >= (1.5 * desRadius)[
+    set heading atan  (desXcor - xcor)(desYcor - ycor)  
+    if ticks mod 10 = 0[
+      set heading atan  (desXcor - xcor)(desYcor - ycor)
+      set speed random-normal avg-speed-nodes 0.3
+      set speed speed / 2
+    ]
+    set xcor xcor + dx * speed
+    set ycor ycor + dy * speed
+  ]
+  [
+    ;if within r, move out
+    ifelse ((xcor - desXcor)^ 2 + (ycor - desYcor)^ 2)^ 0.5 <= desRadius[
+      if ticks mod 10 = 0[
+        set heading atan  (xcor - desXcor)(ycor - desYcor)
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+      ]
+      set xcor xcor + dx * speed
+      set ycor ycor + dy * speed
+    ]
+    [
+      ;;move between r and 1.5 r
+      if ticks mod 10 = 0[
+        set heading random 360
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+        while[((xcor + dx * speed - desXcor)^ 2 + (ycor + dy * speed - desYcor)^ 2)^ 0.5 >= (1.5 * desRadius) or ((xcor + dx * speed - desXcor)^ 2 + (ycor + dy * speed - desYcor)^ 2)^ 0.5 <= desRadius][
+          set heading random 360
+          set speed random-normal avg-speed-nodes 0.3
+          set speed speed / 2
+        ]
+      ]
+      set xcor xcor + dx * speed
+      set ycor ycor + dy * speed
+      
+    ]
+  ]
+end
+
+to moveOutlying
+  let disTemp 100000
+  let k 0
+  set k 0
+  set disTemp 10000
+  
+  while[k < 4][
+    if k = 0 and  abs (item k hubArea - desXcor) < disTemp[
+      set bounder 3
+      set disTemp abs (item k hubArea - desXcor)
+    ]
+    if k = 1 and  abs (item k hubArea - desXcor) < disTemp[
+      set bounder 1
+      set disTemp abs (item k hubArea - desXcor)
+    ]
+    if k = 2 and  abs (item k hubArea - desYcor) < disTemp[
+      set bounder 2
+      set disTemp abs (item k hubArea - desYcor)
+    ]
+    if k = 3 and  abs (item k hubArea - desYcor) < disTemp[
+      set bounder 0
+      set disTemp abs (item k hubArea - desYcor)
+    ]
+    set k k + 1
+  ]
+  
+  ;; move to outlying area
+  if bounder = 0[
+    if ticks mod 10 = 0[
+      ifelse ycor < item 3 hubArea[
+        set heading 0
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+      ]
+      [
+        set heading random 360
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+        while[ycor + dy * speed < item 3 hubArea or xcor + dx * speed <= -500 or xcor + dx * speed >= 250 or ycor + dy * speed >= 750][
+          set heading random 360
+          set speed random-normal avg-speed-nodes 0.3
+          set speed speed / 2
+        ] 
+      ]
+    ]
+    
+    ;;adjust xcor and ycor
+    ifelse xcor + dx * speed < 250 and xcor + dx * speed > -500[
+      set xcor xcor + dx * speed
+    ][
+    ;;out of bound
+    if xcor + dx * speed <= -500[
+      set xcor (-500 -(xcor + dx * speed) + -500)
+    ]
+    if xcor + dx * speed >= 250[
+      set xcor (250 - ((xcor + dx * speed)- 250))
+    ]
+    ]
+    
+    ifelse ycor + dy * speed < 750 and ycor + dy * speed > -250[
+      set ycor ycor + dy * speed
+    ]
+    [
+      if ycor + dy * speed <= -250[
+        set ycor (-250 -(ycor + dy * speed) + -250)
+      ]
+      if ycor + dy * speed >= 750[
+        set ycor (ycor -((ycor + dy * speed) - 750))
+      ]
+    ]
+  ]
+  
+  if bounder = 1[
+    if ticks mod 10 = 0[
+      ifelse xcor < item 1 hubArea[
+        set heading 90
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+      ]
+      [
+        set heading random 360
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+        while[xcor + dx * speed < item 1 hubArea or xcor + dx * speed >= 250 or ycor + dy * speed >= 750 or ycor + dy * speed <= -250][
+          set heading random 360
+          set speed random-normal avg-speed-nodes 0.3
+          set speed speed / 2
+        ] 
+      ]
+    ]
+    ;;adjust xcor and ycor
+    ifelse xcor + dx * speed < 250 and xcor + dx * speed > -500[
+      set xcor xcor + dx * speed
+    ][
+    ;;out of bound
+    if xcor + dx * speed <= -500[
+      set xcor (-500 -(xcor + dx * speed) + -500)
+    ]
+    if xcor + dx * speed >= 250[
+      set xcor (250 - ((xcor + dx * speed)- 250))
+    ]
+    ]
+    
+    ifelse ycor + dy * speed < 750 and ycor + dy * speed > -250[
+      set ycor ycor + dy * speed
+    ]
+    [
+      if ycor + dy * speed <= -250[
+        set ycor (-250 -(ycor + dy * speed) + -250)
+      ]
+      if ycor + dy * speed >= 750[
+        set ycor (ycor -((ycor + dy * speed) - 750))
+      ]
+    ]
+  ]
+  
+  if bounder = 2[
+    if ticks mod 10 = 0[
+      ifelse ycor > item 2 hubArea[
+        set heading 180
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+      ]
+      [
+        set heading random 360
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+        while[ycor + dy * speed > item 2 hubArea or xcor + dx * speed >= 250 or xcor + dx * speed <= -500 or ycor + dy * speed <= -250][
+          set heading random 360
+          set speed random-normal avg-speed-nodes 0.3
+          set speed speed / 2
+        ] 
+      ]
+    ]
+    
+    ;;adjust xcor and ycor
+    ifelse xcor + dx * speed < 250 and xcor + dx * speed > -500[
+      set xcor xcor + dx * speed
+    ][
+    ;;out of bound
+    if xcor + dx * speed <= -500[
+      set xcor (-500 -(xcor + dx * speed) + -500)
+    ]
+    if xcor + dx * speed >= 250[
+      set xcor (250 - ((xcor + dx * speed)- 250))
+    ]
+    ]
+    
+    ifelse ycor + dy * speed < 750 and ycor + dy * speed > -250[
+      set ycor ycor + dy * speed
+    ]
+    [
+      if ycor + dy * speed <= -250[
+        set ycor (-250 -(ycor + dy * speed) + -250)
+      ]
+      if ycor + dy * speed >= 750[
+        set ycor (ycor -((ycor + dy * speed) - 750))
+      ]
+    ]
+  ]
+  
+  if bounder = 3[
+    if ticks mod 10 = 0[
+      ifelse xcor > item 0 hubArea[
+        set heading 270
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+      ]
+      [
+        set heading random 360
+        set speed random-normal avg-speed-nodes 0.3
+        set speed speed / 2
+        while[xcor + dx * speed > item 0 hubArea or xcor + dx * speed <= -500 or ycor + dy * speed >= 750 or ycor + dy * speed <= -250][
+          set heading random 360
+          set speed random-normal avg-speed-nodes 0.3
+          set speed speed / 2
+        ] 
+      ]
+    ]
+    
+    ifelse xcor + dx * speed < 250 and xcor + dx * speed > -500[
+      set xcor xcor + dx * speed
+    ][
+    ;;out of bound
+    if xcor + dx * speed <= -500[
+      set xcor (-500 -(xcor + dx * speed) + -500)
+    ]
+    if xcor + dx * speed >= 250[
+      set xcor (250 - ((xcor + dx * speed)- 250))
+    ]
+    ]
+    
+    ifelse ycor + dy * speed < 750 and ycor + dy * speed > -250[
+      set ycor ycor + dy * speed
+    ]
+    [
+      if ycor + dy * speed <= -250[
+        set ycor (-250 -(ycor + dy * speed) + -250)
+      ]
+      if ycor + dy * speed >= 750[
+        set ycor (ycor -((ycor + dy * speed) - 750))
+      ]
+    ]
+  ]
+  
+end
+
+to moveBtnHubs ;;move towards the destination hub at the average speed
+  set heading atan  (item hubVisiting hubXcorList - xcor)(item hubVisiting hubYcorList - ycor)
+  set speed avg-speed-nodes
+  set desXcor item hubVisiting hubXcorList
+  set desYcor item hubVisiting hubYcorList
+  let lasHubVis  -1  ;; the last hub visted
+  let lasDesXcor 0
+  let lasDesYcor 0
+  ;;if this is the first hub it visits
+  
+  ifelse hubVisited = 1[
+    
+    ;;record the entering time
+    if (length sTime) < hubVisited and (xcor > desXcor + item hubVisiting hubHalfSideLen or xcor < desXcor - item hubVisiting hubHalfSideLen or ycor > desYcor + item hubVisiting hubHalfSideLen  or ycor < desYcor - item hubVisiting hubHalfSideLen) and (xcor + dx * speed <= desXcor + item hubVisiting hubHalfSideLen and xcor + dx * speed >= desXcor - item hubVisiting hubHalfSideLen and ycor + dy * speed <= desYcor + item hubVisiting hubHalfSideLen  and ycor + dy * speed >= desYcor - item hubVisiting hubHalfSideLen)[
+      ;;going to enter the hub
+      set sTime lput (ticks + 1) sTime
+    ]
+  ][
+  set lasHubVis (item (hubVisited - 2)hubVisitedTable)
+  set lasDesXcor item lasHubVis hubXcorList
+  set lasDesYcor item lasHubVis hubYcorList
+  ;;record the leaving time
+  ;;if the hub the node is going to is the same one as last hub
+  if (length eTime) < hubVisited and (xcor <= lasDesXcor + item lasHubVis hubHalfSideLen and xcor >= lasDesXcor - item lasHubVis hubHalfSideLen and ycor <= lasDesYcor + item lasHubVis hubHalfSideLen  and ycor >= lasDesYcor - item lasHubVis hubHalfSideLen) and (xcor + dx * speed > lasDesXcor + item lasHubVis hubHalfSideLen or xcor + dx * speed < lasDesXcor - item lasHubVis hubHalfSideLen or ycor + dy * speed > lasDesYcor + item lasHubVis hubHalfSideLen  or ycor + dy * speed < lasDesYcor - item lasHubVis hubHalfSideLen)[
+    set eTime lput ticks eTime
+  ]
+  ;;record the entering time
+  if (length sTime) < hubVisited and (xcor > desXcor + item hubVisiting hubHalfSideLen or xcor < desXcor - item hubVisiting hubHalfSideLen or ycor > desYcor + item hubVisiting hubHalfSideLen  or ycor < desYcor - item hubVisiting hubHalfSideLen) and (xcor + dx * speed <= desXcor + item hubVisiting hubHalfSideLen and xcor + dx * speed >= desXcor - item hubVisiting hubHalfSideLen and ycor + dy * speed <= desYcor + item hubVisiting hubHalfSideLen  and ycor + dy * speed >= desYcor - item hubVisiting hubHalfSideLen)[
+    set sTime lput ticks sTime
+  ]
+  ]
+  
+  
+  set xcor xcor + dx * speed
+  set ycor ycor + dy * speed
+end
+to test2
+  ask turtle 2[
+      let disTemp 100000
+  let k 0
+  set k 0
+  set disTemp 10000
+  
+  while[k < 4][
+    if k = 0 and  (abs (item k hubArea - desXcor)) < disTemp[
+      set bounder 3
+      set disTemp (abs (item k hubArea - desXcor))
+    ]
+    if k = 1 and  (abs (item k hubArea - desXcor)) < disTemp[
+      set bounder 1
+      set disTemp (abs (item k hubArea - desXcor))
+    ]
+    if k = 2 and  (abs (item k hubArea - desYcor)) < disTemp[
+      set bounder 2
+      set disTemp (abs (item k hubArea - desYcor))
+    ]
+    if k = 3 and  (abs (item k hubArea - desYcor)) < disTemp[
+      set bounder 0
+      set disTemp (abs (item k hubArea - desYcor))
+    ]
+    set k k + 1
+  ]
+    ]
+end

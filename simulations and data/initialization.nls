@@ -1,0 +1,673 @@
+breed[nodes a-node] ;;mobile nodes
+breed[aps a-ap] ;;access points
+
+globals[
+  msgGen ;; no of msgs generated
+  msgGenTime  ;;time when the delivery request is generated
+  msgDupTot  ;; no of msgs that are duplicated in total
+  msgRecTot  ;; msgs received by destination in total
+  msgRecTime ;; delay when each msg is received by des
+  genTimeofRecMsg  ;; the time when the received msgs are generated
+  hubXcorList ;; list of the x coordination of hub's center
+  hubYcorList ;; list of the x coordination of hub's center
+  hubRadiusList ;;list of radius of hubs
+  hubArea  ;; coordinates of bounds of hub areaf
+  
+  hubSideLenList ;;list of the length of the hub square
+  hubHalfSideLen
+  visPosTableRecord  ;;historical record of nodes' time table
+  hubNum
+  transCom?   ;;true if the transmitting of msgs is done  
+  ;nodes-number
+]
+
+nodes-own[
+  
+  speed
+  storage  ;;storage size for msgs
+  processDone? ;true if the nodes received, sent or moved at the this second
+               ;nodeInContact ;;the node to which this node is talking to, the value -2 means this node is not talking to anyone
+  interactionTime   ;unit second, a variable based on poisson distribution
+  
+  curState    ;;current state
+  neState   ;; next state
+  neHub      ;;next hub
+  preHub     ;;previous hub
+  bounder    
+  
+  nodeState  ;;the list shows the latest state of each node
+  nodeStateStep  ;;the step no of a state
+  allState ;;the state of other node
+  allStateStep ;time when the latest state is recorded
+                    ;;lists about the define pattern
+  iniState        ;;probability distribution of first state
+  tranMatrix       ;;transition matrix 
+                    
+  visPosTable       ;;this table contain the possibilities of visiting the hubs given a specific time period
+  visTable          ;; table of the hubs/places the node visits
+  sojTimeTable      ;;the time the node will sojurn in one hub, it is set to poisson distribution
+  hubVisited        ;;the number of hubs has been visited 
+  desXcor           ;;x coordination of the destination hub's center  
+  desYcor            ;;y coordination of the destination hub's center
+  desRadius      ;;des hub radius
+  hubVisiting  ;; hub the node is visiting now 
+  sojTimeLeft   ;; the left time the node sojurn in one hub
+  hubVisitedTable    ;; the table of hubs which have been visited by this node
+  sTime      ;; the start time when the node begin to stay in a hub
+  eTime       ;; the end time when the node start leaving the hub
+  
+  data-received  
+  ;; parameter table about the msg to be sent
+  sourceSeqNo         ;;the sequence number of the node which launches a communication request
+  desSeqNo          ;;  sequence number of destination
+  msgSize         ;;the size of message to be delivered
+  usedStorage
+  msgSeqNo
+  
+  ;;summary of the msgs duplicated and stored in each node
+  
+  mr       ;;message received by destination, set its default as 0
+           ;; pay close attention to that the number at the same position in each of the following lists is related to one same msg 
+  msgSouList  ;; the list of the message sequence no of the msgs received by each node  
+  msgDesList    ;; the list of destinations of the msgs received by each node
+  msgSizeList    ;; the list of msg size of the msgs received by each node
+  msgHopCountList ;; the list of hop counts of messages
+  msgRecByDesList  ;;the list of message sequence number which has reached the destination
+  msgSeqNoList
+  
+  ;;recent contact
+  recConNode  ;; node number of recent contact
+  recConTime  ;; time of recent contact
+  
+  ;;
+  intTimeBuf  ;;buffer to save the left interaction time
+  intNodesBuf  ;;buffer to save the other node this node is interacting with now
+  
+  msgSouBuf  ;; the buffer of the message sequence no of the msgs received by each node 
+  msgDesBuf    ;; the buffer of destinations of the msgs received by each node
+  msgSizeBuf    ;; the buffer of msg size of the msgs received by each node
+  msgHopCountBuf
+  msgSeqNoBuf
+  msgFromBuf  ;;the node which is sending this msg to the next node
+  msgRelayBuf   ;;the node realaying this msg
+  progressBuf   
+  
+  recAsDes?  ;; yes if it is receiving a msg as the destination of it
+]
+
+to initialization
+  clear-all
+  reset-ticks
+  reset-timer          ;; used to record the time
+  random-seed new-seed ;; set the random seed as new-seed so nodes can be distributed randomly and differently everytime                        
+                       ;; we run the program
+  ;;set nodes-number 30;
+  createNodes          ;;setup modes
+  setVisPos            ;;initialize the visiting possibilty table
+  hubVisInitialization ;;determine where to go according to vispostable 
+  hubInitialization    ;;initialization of hubs
+  firstStateIni   ;; first state initialization
+  set hubNum 4;;
+  set avg-sojurn-time 30 ;;average sojourn time is 10 mins
+  
+  reset-ticks
+end
+
+to createNodes ;;create mobile nodes of random locations
+  
+  set msgGen 0
+  set msgGenTime []
+  set msgDupTot 0   ;;initialize quantity of msgs that are duplicated
+  set msgRecTot 0   ;;initialize quantity of msgs that are received by destination
+  set msgRecTime []
+  set genTimeOfRecMsg []
+  set transCom? false
+  
+  create-nodes nodes-number[       
+    set xcor random-xcor * 0.9    ;; set the location of the group hub and avoid putting nodes at the edge for better vision
+    set ycor random-ycor * 0.9   
+    
+    set color green
+    set speed random-normal avg-speed-nodes 0.3 
+    set heading random 360 ; initialize the direction of nodes' movement
+    set shape "phone"
+    set size 20
+    set label who
+    set storage avg-storage-size  ;; set the storage size according to normal distribution
+    set processDone? false
+    ;set nodeInContact -2
+    set processDone? false
+    
+    mobilityInitialization
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    ;;msg-related information initialization 
+    msgInitialize
+    ;;set InteractionTime based on poisson distributed random variable with the avg-interaction-time as its mean
+    ;;msgInitialize        ;; initialize the msg to be sent in each node    
+    ;;initialize the summary list of msgs
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ]
+  
+end
+
+to mobilityInitialization
+  set nodeState -1
+  set nodeStateStep -1
+  set allState [-1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1]
+  set allStateStep [-1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1]
+  
+  set iniState []
+  set tranMatrix []
+  set visPosTable[]
+  set visTable []
+  set sojTimeTable[]
+  set sojTimeLeft -1
+  set hubVisiting -1
+  set hubVisited 0
+  set hubVisitedTable []
+  set sTime []
+  set eTime []  
+end
+
+to setVisPos
+  
+  ;;set probability distribution of first state
+  file-close-all 
+  file-open "ini_state_30.txt"
+  let k 0
+  while[k < nodes-number][
+    ask turtle k[
+      set iniState (read-from-string file-read-line)
+      ;;set visPosTable inistate
+    ]
+    set k k + 1
+  ]
+  file-close-all
+  
+  
+  file-close-all 
+  file-open "transition_matrix_30.txt"
+  set k 0
+  while[k < nodes-number][
+    ask turtle k[
+      set tranMatrix (read-from-string file-read-line)
+    ]
+    set k k + 1
+  ]
+  file-close-all
+  
+  file-close-all 
+  file-open "probability_30.txt"
+  set k 0
+  while[k < nodes-number][
+    ask turtle k[
+      set visPosTable (read-from-string file-read-line)
+    ]
+    set k k + 1
+  ]
+  file-close-all
+  
+end
+
+;; set vis table
+to hubVisInitialization
+  ;;determine the first hub to go
+  let roll 0
+  let hub 0   ;;tempHub is the hub the node is going to vist
+  let tempSum 0
+  let radius 0
+  let time_division 0
+  let i 0
+  let j 0
+  let time_int 0
+  set time_int 60
+  let time_div 0
+  set time_div 480 / time_int
+  let tranVector []
+  ;;determine where to go according to the vispostable
+  while[i < nodes-number][
+    ask turtle i[
+      set j 0
+      while[j < time_div][
+        ifelse j = 0[
+        set hub 0
+        set roll random-float 1
+        set roll roll - 0.001 ;;error
+        set tempSum item 0 iniState
+        while[roll > tempSum][
+          set hub hub + 1
+          set tempSum tempSum + item hub iniState
+        ]
+        set visTable lput hub visTable
+        ;;put the transition probability into vispostable
+        set visPosTable lput (item hub tranMatrix) visPosTable
+        ;;update node state and node state step
+
+        set j j + 1
+        ][
+        set hub 0
+        set roll random-float 1
+        set roll roll - 0.001 ;;error
+        set tranVector item (item (j - 1) visTable) tranMatrix
+        set tempSum item 0 tranVector
+        while[roll > tempSum][
+          set hub hub + 1
+          set tempSum tempSum + item hub tranVector
+        ]
+        set visTable lput hub visTable
+        ;;put the transition probability into vispostable
+        set visPosTable lput (item hub tranMatrix) visPosTable
+        set j j + 1
+        ]
+      ]
+    ]
+    set i i + 1
+  ]
+  
+end
+
+
+to msgInitialize
+  ;;set the size of the msgs according to the poisson distribution
+  set msgSize avg-message-size
+  set usedStorage 0
+  
+  ;;aps are created before nodes, we set the source sequence number of nodes accordingly
+  set sourceSeqNo who
+  set msgSeqNo msgGen
+  set msgGen msgGen + 1
+  set desSeqNo random (nodes-number - 1)
+  while[desSeqNo = sourceSeqNo][
+    set desSeqNo random (nodes-number - 1)
+  ]
+  set mr 0                    ;;at beginning, no msg reaches the destination; 
+                              ;;when mr is equal to nodes-number(number of msgs in the network), the communication process is done.
+  set recConNode []
+  set recConTime []
+  
+  set msgSouList []           ;;list of source seq no of the msgs
+  set msgSizeList []          ;;list of msg size
+  set msgHopCountList[]
+  set msgDesList []           ;;list of destination
+  set msgRecByDesList []        ;;the list of message sequence number which has reached the destination   
+  set msgSeqNoList []
+  
+  set intTimeBuf []
+  set intNodesBuf []
+  
+  set msgSouBuf []           ;; source seq no of the msgs in buffer
+  set msgSizeBuf []          ;; msg size in buffer
+  set msgHopCountBuf []
+  set msgDesBuf []           ;; destination in buffer
+  set msgSeqNoBuf []         ;; msg seq no in buffer
+  set msgRelayBuf []
+  set msgFromBuf [] ;;the node which is sending this msg to the next node
+  set progressBuf []
+  
+  ;;save the msg this node wants to transfer to another one in the listss
+  set msgDesList lput desSeqNo msgDesList
+  set msgSizeList lput msgSize msgSizeList
+  set msgHopCountList lput 0 msgHopCountList
+  set msgSouList lput sourceSeqNo msgSouList
+  set msgSeqNoList lput msgSeqNo msgSeqNoList
+  set msgGenTime lput 0 msgGenTime
+  set usedStorage usedStorage + avg-message-size
+  
+end
+
+to hubInitialization
+  file-close-all
+  file-open "hub_para.txt"
+  let hubX []
+  let hubY []
+  let hubR []
+  set hubX(read-from-string file-read-line)
+  set hubY (read-from-string file-read-line)
+  set hubR(read-from-string file-read-line)
+  file-close-all
+  
+  
+  ;;lower bound of x y 
+  let xLow 0
+  let yLow 0
+  let xUp 0
+  let yUp 0
+  let Xcenter 0
+  let Ycenter 0
+  let radi 0
+  let k 0
+  let i 0
+  let j 0
+  let cor [red orange yellow green blue magenta brown]
+ 
+  ;;initialization
+  set hubXcorList []
+  set hubYcorList []
+  set hubRadiusList []
+  set hubArea [-377 38 -209 600]
+  ;; scale 1:2
+  while[k < 7 ][
+    set hubXcorList lput (item k hubX / 2) hubXcorList
+    set hubYcorList lput (item k hubY / 2) hubYcorList
+    set hubRadiusList lput (item k hubR / 2) hubRadiusList
+    set k k + 1
+  ]
+  set  k 0
+  ;;set the color of the hub area gray
+  while[k < 7][
+    set Xcenter item k hubXcorList
+    set Ycenter item k hubYcorList
+    set radi item k hubRadiusList
+    set xLow Xcenter - radi
+    set yLow Ycenter - radi
+    set xUp Xcenter + radi
+    set yUp Ycenter + radi
+    set i xLow
+    set j yLow
+    while[i <= xUp][
+      set j yLow
+      while[j <= yUp][
+        if (((i - Xcenter)^ 2 +(j - Ycenter)^ 2)^ 0.5) <= radi[
+          ask patch i j [ set pcolor gray]
+        ]
+        if (((i - Xcenter)^ 2 +(j - Ycenter)^ 2)^ 0.5) <= 5[
+          ask patch i j [ set pcolor item k cor]
+        ]
+        set j j + 1
+      ]
+      set i i + 1
+    ]
+    set k k + 1
+  ]
+  
+end
+
+;;set the initial location of nodes
+to firstStateIni
+  let xh 0
+  let yh 0
+  let x 0
+  let y 0
+  let r 0
+  let i 1
+  let nextHub -1
+  let posTemp 0
+  let disTemp 10000
+  let k 0
+  let visPos []
+  let timeDiv 240 / avg-sojurn-time
+  
+  ask nodes[
+    set curState item 0 visTable
+    set neState item 1 visTable
+    set neHub -1
+    
+    ;if the first place is a hub
+    if item 0 visTable < 7[
+      set xh item (item 0 visTable) hubXcorList
+      set yh item (item 0 visTable) hubYcorList
+      set r item (item 0 visTable) hubRadiusList
+      set x (xh - r) + 2 * r * (random-float 1)
+      set y (yh - r) + 2 * r * (random-float 1)
+      while [((x - xh)^ 2 + (y - yh)^ 2)^ 0.5 > r][
+        set x (xh - r) + 2 * r * (random-float 1)
+        set y (yh - r) + 2 * r * (random-float 1)
+      ] 
+      set xcor x
+      set ycor y
+    ]
+    
+    set i 1
+    set nextHub -1
+    ;if the first place is noise
+    if item 0 visTable = 7[
+      while[nextHub = -1 and i < timeDiv][
+        if item i visTable < 7[
+          set nextHub item i visTable
+          ]
+        set i i + 1
+      ]
+      ;;find the next hub to go to (no hub to go to anymore) 
+      ifelse i = timeDiv[
+        set x 750 * random-float 1 - 500
+        set y 1000 * random-float 1 - 250
+        while[(x <= 38 and x >= -377) or (y <= 600 and y >= -209)][
+          set x 750 * random-float 1 - 500
+          set y 1000 * random-float 1 - 250
+        ]
+        set xcor x
+        set ycor y
+      ][
+      set xh item nextHub hubXcorList
+      set yh item nextHub hubYcorList
+      set r item nextHub hubRadiusList
+      set k 0
+      set disTemp 10000
+      while[k < 4][
+        if k = 0 and  abs (item k hubArea - xh) < disTemp[
+          set bounder 3
+          set disTemp abs (item k hubArea - xh)
+        ]
+        if k = 1 and  abs (item k hubArea - xh) < disTemp[
+          set bounder 1
+          set disTemp abs (item k hubArea - xh)
+        ]
+        if k = 2 and  abs (item k hubArea - yh) < disTemp[
+          set bounder 2
+          set disTemp abs (item k hubArea - yh)
+        ]
+        if k = 3 and  abs (item k hubArea - yh) < disTemp[
+          set bounder 0
+          set disTemp abs (item k hubArea - yh)
+        ]
+        set k k + 1
+      ]
+      if bounder = 0[
+        set xcor 750 * random-float 1 - 500
+        set ycor 600 + (750 - 600) * random-float 1
+      ]
+      if bounder = 2[
+        set xcor 750 * random-float 1 - 500
+        set ycor -209 - (-209 - (-250)) * random-float 1
+      ]
+      if bounder = 1[
+        set ycor 1000 * random-float 1 - 250
+        set xcor 38 + (250 - 38) * random-float 1
+      ]
+      if bounder = 3[
+        set ycor 1000 * random-float 1 - 250
+        set xcor -377 - (-377 - (-500)) * random-float 1
+      ]
+      ]
+    ]   
+    
+    
+    ;;next hub is the one with highest visit posibility
+    ;;2nd and 3rd noise area
+    if item 0 visTable > 7[
+      set i 1
+      set nextHub -1
+      while[nextHub = -1 and i < timeDiv][
+        if item i visTable < 7[
+          set nextHub item i visTable
+        ]
+        set i i + 1  
+      ]
+      ;;find the next hub to go to 
+      ifelse i = timeDiv [
+        set x 750 * random-float 1 - 500
+        set y 1000 * random-float 1 - 250
+        while[(x <= 38 and x >= -377) or (y <= 600 and y >= -209)][
+          set x 750 * random-float 1 - 500
+          set y 1000 * random-float 1 - 250
+        ]
+        set xcor x
+        set ycor y
+      ][
+      set xh item nextHub hubXcorList
+      set yh item nextHub hubYcorList
+      set r item nextHub hubRadiusList
+      set x (xh - 1.5 * r) + 3 * r * (random-float 1)
+      set y (yh - 1.5 * r) + 3 * r * (random-float 1)
+      while [((x - xh)^ 2 + (y - yh)^ 2)^ 0.5 < r or ((x - xh)^ 2 + (y - yh)^ 2)^ 0.5 > 1.5 * r][
+        set x (xh - 1.5 * r) + 3 * r * (random-float 1)
+        set y (yh - 1.5 * r) + 3 * r * (random-float 1)
+      ] 
+      set xcor x
+      set ycor y
+      ]
+    ]
+  ]
+end
+
+to vis_pos_temp
+  let j 0  ;;loop variable
+  let possibilityTemp 0 ;;temporary variable of possibility
+  let possibilitySumTemp 0
+  let positionTemp 0  ;;temporary variable of position
+                      ;;temporary list variable to save the possiblities of visiting hubs in one time period
+  let possibilityListTemp [-1 -1 -1 -1]
+  
+  while [j < 11][
+    set visPosTable lput [] visPosTable
+    let i 0   ;;loop variable
+    while[i < 3][
+      set possibilityTemp (precision random-float (1 - possibilitySumTemp) 2)
+      set possibilitySumTemp possibilitySumTemp + possibilityTemp
+      set positionTemp random 4
+      while[item positionTemp possibilityListTemp >= 0][
+        set positionTemp random 4
+      ]
+      set possibilityListTemp replace-item positionTemp possibilityListTemp possibilityTemp
+      set i i + 1
+    ]
+    
+    set possibilityListTemp replace-item (position -1 possibilityListTemp) possibilityListTemp (precision (1 - possibilitySumTemp) 2)
+    
+    set visPosTable replace-item j visPosTable possibilityListTemp
+    
+    set possibilityTemp 0 ;;temporary variable of possibility
+    set possibilitySumTemp 0
+    set positionTemp 0  ;;temporary variable of position
+                        ;;temporary list variable to save the possiblities of visiting hubs in one time period
+    set possibilityListTemp [-1 -1 -1 -1]
+    
+    ;;sojurn time is set according to poisson distritbution with avg-sojurn-time mean
+    ;;set sojTimeTable lput (random-poisson (avg-sojurn-time * 60)) sojTimeTable
+    
+    set hubVisited 0
+    set j j + 1
+    
+  ]
+end
+
+to hub_ini_temp
+  ;;initialize the loop variable
+  let i 0
+  let j 0
+  let xTemp 0
+  let yTemp 0
+  ;;assume there are 4 hubs distributed in a 200*200 area
+  let hubNumber 4
+  ;;temporary variant
+  let xCenter 0
+  let yCenter 0
+  let sideLen 0
+  ;; assume all the  hubs are squares, and the side length is randomly chosen between 40 and 80 meters and there is one hub in each quadrant
+  ;; the center of the hub is randomly chosen under the constriction that it is loacted at least 40 meters away from the quadrant boarder
+  
+  ;;center of hub 1 is within the area x:[40 60],y:[40 60]  
+  set xCenter random 20 + 40
+  set yCenter random 20 + 40
+  ;;save the center in the hub location list
+  set hubXcorList lput xCenter hubXcorList
+  set hubYcorList lput yCenter hubYcorList
+  ;;the side length of the hub square is randomly picked between 40 to 80;
+  set sideLen random 40 + 40;
+  set hubSideLenList lput sideLen hubSideLenList
+  set hubHalfSideLen lput (sideLen / 2) hubHalfSideLen
+  ;;set the color of the hub area gray
+  set xTemp Xcenter - sideLen / 2
+  set yTemp Ycenter - sideLen / 2
+  while[i < sideLen][
+    set j 0
+    while[j < sideLen][
+      ask patch (i + xTemp) (j + yTemp) [ set pcolor gray]
+      set j j + 1
+    ]
+    set i i + 1
+  ]
+  
+  
+  ;;center of hub 2 is within the area x:[-40 -60],y:[40 60]  
+  set xCenter random 20 - 60
+  set yCenter random 20 + 40
+  ;;save the center in the hub location list
+  set hubXcorList lput xCenter hubXcorList
+  set hubYcorList lput yCenter hubYcorList
+  ;;the side length of the hub square is randomly picked between 40 to 80;
+  set sideLen random 40 + 40;
+  set hubSideLenList lput sideLen hubSideLenList
+  set hubHalfSideLen lput (sideLen / 2) hubHalfSideLen
+  ;;set the color of the hub area gray
+  set xTemp Xcenter - sideLen / 2
+  set yTemp Ycenter - sideLen / 2
+  set i 0
+  set j 0
+  while[i < sideLen][
+    set j 0
+    while[j < sideLen][
+      ask patch (i + xTemp) (j + yTemp) [ set pcolor gray]
+      set j j + 1
+    ]
+    set i i + 1
+  ]
+  
+  ;;center of hub 3 is within the area x:[-40 -60],y:[-40 -60]  
+  set xCenter random 20 - 60
+  set yCenter random 20 - 60
+  ;;save the center in the hub location list
+  set hubXcorList lput xCenter hubXcorList
+  set hubYcorList lput yCenter hubYcorList
+  ;;the side length of the hub square is randomly picked between 40 to 80;
+  set sideLen random 40 + 40;
+  set hubSideLenList lput sideLen hubSideLenList
+  set hubHalfSideLen lput (sideLen / 2) hubHalfSideLen
+  ;;set the color of the hub area gray
+  set xTemp Xcenter - sideLen / 2
+  set yTemp Ycenter - sideLen / 2
+  set i 0
+  set j 0
+  while[i < sideLen][
+    set j 0
+    while[j < sideLen][
+      ask patch (i + xTemp) (j + yTemp) [ set pcolor gray]
+      set j j + 1
+    ]
+    set i i + 1
+  ]
+  
+  ;;center of hub 4 is within the area x:[40 60],y:[-40 -60]  
+  set xCenter random 20 + 40
+  set yCenter random 20 - 60
+  ;;save the center in the hub location list
+  set hubXcorList lput xCenter hubXcorList
+  set hubYcorList lput yCenter hubYcorList
+  ;;the side length of the hub square is randomly picked between 40 to 80;
+  set sideLen random 40 + 40;
+  set hubSideLenList lput sideLen hubSideLenList
+  set hubHalfSideLen lput (sideLen / 2) hubHalfSideLen
+  ;;set the color of the hub area gray
+  set xTemp Xcenter - sideLen / 2
+  set yTemp Ycenter - sideLen / 2
+  set i 0
+  set j 0
+  while[i < sideLen][
+    set j 0
+    while[j < sideLen][
+      ask patch (i + xTemp) (j + yTemp) [ set pcolor gray]
+      set j j + 1
+    ]
+    set i i + 1
+  ]
+end
